@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="sr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kume Agent — Diktiranje</title>
+<style>body{font:16px Arial,sans-serif;max-width:650px;margin:auto;padding:22px;background:#f4f6fa;color:#18243a}main{background:#fff;padding:22px;border-radius:14px;box-shadow:0 2px 12px #0001}h1{font-size:23px}textarea,select{width:100%;box-sizing:border-box;border:1px solid #aebcd0;border-radius:9px;padding:10px;font:inherit}textarea{min-height:240px;resize:vertical}button{padding:11px 15px;border:0;border-radius:9px;cursor:pointer;background:#dfe6f1;font-weight:bold}button.primary{background:#2456a6;color:white}button:disabled{opacity:.5}nav{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}#status{color:#31516f;min-height:22px}#interim{color:#69798c;min-height:24px}small{color:#667}
+</style></head><body><main><h1>🎙️ Kume Agent — Diktiranje</h1>
+<label for="language">Jezik</label><select id="language"><option value="sr-RS">Srpski</option><option value="mk-MK">Makedonski</option></select>
+<nav><button id="start" class="primary">🎙️ Počni</button><button id="pause" disabled>Pauza</button><button id="stop" disabled>Zaustavi</button></nav>
+<div id="status" role="status">Spremno. Dozvoli mikrofon kada Chrome zatraži.</div><div id="interim"></div>
+<textarea id="text" placeholder="Prepoznati govor pojaviće se ovde. Možeš ga ispraviti pre prenosa."></textarea>
+<nav><button id="send" class="primary">Prenesi tekst u Kume Agent</button><button id="copy">Kopiraj tekst</button></nav>
+<small>Besplatno Chrome prepoznavanje govora. Prepoznavanje može koristiti Google servere i zahteva internet. Ne diktiraj poverljive podatke bez odgovarajuće dozvole.</small>
+</main><script>
+const $=id=>document.getElementById(id);
+const params=new URLSearchParams(location.search);
+const targetOrigin=params.get('targetOrigin')||'';
+const token=params.get('token')||'';
+if(['sr-RS','mk-MK'].includes(params.get('lang')))$('language').value=params.get('lang');
+let engine=null,wanted=false,paused=false,starting=false,session=0;
+function state(msg){$('start').disabled=wanted;$('pause').disabled=!wanted;$('stop').disabled=!wanted;$('language').disabled=wanted;$('pause').textContent=paused?'Nastavi':'Pauza';$('status').textContent=msg;}
+function append(text){if(!text.trim())return;const t=$('text');t.value+=(t.value && !/\s$/.test(t.value)?' ':'')+text.trim();}
+function norm(s){return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[.,!?;:]+/g,'').trim();}
+function startEngine(id){if(!wanted||starting||!engine||id!==session)return;try{starting=true;engine.start();}catch(e){starting=false;}}
+$('start').onclick=()=>{
+ const API=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!API)return state('Chrome ne podržava SpeechRecognition u ovom prozoru.');
+ const id=++session;engine=new API();engine.lang=$('language').value;engine.continuous=true;engine.interimResults=true;
+ wanted=true;paused=false;
+ engine.onstart=()=>{if(id!==session)return;starting=false;state('Slušam…');};
+ engine.onresult=e=>{if(id!==session)return;let interim='';for(let i=e.resultIndex;i<e.results.length;i++){
+   const r=e.results[i],spoken=r[0].transcript.trim();if(!r.isFinal){interim+=spoken+' ';continue;}
+   const command=norm(spoken);
+   if(['pauza','пауза','pause'].includes(command)){paused=true;state('Pauza. Reci „počni“ ili klikni Nastavi.');continue;}
+   if(['pocni','почни','nastavi','настави','resume'].includes(command)){if(paused){paused=false;if($('text').value&&!$('text').value.endsWith('\n'))$('text').value+='\n';state('Slušam…');}continue;}
+   if(!paused)append(spoken);
+ }$('interim').textContent=paused?'':interim.trim();};
+ engine.onerror=e=>{if(id!==session)return;starting=false;
+   if(['not-allowed','service-not-allowed','language-not-supported','audio-capture'].includes(e.error)){
+     wanted=false;state('Greška prepoznavanja: '+e.error+'. Proveri dozvole i podršku za jezik.');
+   }else if(e.error==='network'){wanted=false;state('Mrežna greška pri prepoznavanju govora.');}
+ };
+ engine.onend=()=>{if(id!==session)return;starting=false;if(wanted)setTimeout(()=>startEngine(id),400);else $('interim').textContent='';};
+ state('Pokrećem mikrofon…');startEngine(id);
+};
+$('pause').onclick=()=>{paused=!paused;if(!paused&&$('text').value&&!$('text').value.endsWith('\n'))$('text').value+='\n';state(paused?'Pauza.':'Slušam…');};
+function stop(){++session;wanted=false;paused=false;starting=false;if(engine){try{engine.stop();}catch(e){}engine=null;}$('interim').textContent='';state('Zaustavljeno. Tekst možeš pregledati i preneti.');}
+$('stop').onclick=stop;
+$('send').onclick=()=>{
+ const text=$('text').value.trim();if(!text)return state('Nema teksta za prenos.');
+ if(text.length>30000)return state('Tekst je predugačak (maksimalno 30000 karaktera).');
+ if(!window.opener||!targetOrigin||!token)return state('Povratna veza nije dostupna. Koristi Kopiraj tekst i nalepi u Kume Agent.');
+ stop();try{window.opener.postMessage({type:'KUME_DICTATION_TEXT',token,text},targetOrigin);state('Tekst je poslat. Možeš zatvoriti prozor.');}catch(e){state('Prenos nije uspeo. Koristi Kopiraj tekst.');}
+};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText($('text').value);state('Tekst je kopiran. Nalepi ga u Kume Agent.');}catch(e){$('text').select();state('Kopiraj označeni tekst (Ctrl+C).');}};
+</script></body></html>
