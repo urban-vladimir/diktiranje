@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="sr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="mk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kume Agent — Diktiranje</title>
 <style>body{font:16px Arial,sans-serif;max-width:650px;margin:auto;padding:22px;background:#f4f6fa;color:#18243a}main{background:#fff;padding:22px;border-radius:14px;box-shadow:0 2px 12px #0001}h1{font-size:23px}textarea,select{width:100%;box-sizing:border-box;border:1px solid #aebcd0;border-radius:9px;padding:10px;font:inherit}textarea{min-height:240px;resize:vertical}button{padding:11px 15px;border:0;border-radius:9px;cursor:pointer;background:#dfe6f1;font-weight:bold}button.primary{background:#2456a6;color:white}button:disabled{opacity:.5}nav{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}#status{color:#31516f;min-height:22px}#interim{color:#69798c;min-height:24px}small{color:#667}
 </style></head><body><main><h1>🎙️ Kume Agent — Diktiranje</h1>
-<label for="language">Jezik</label><select id="language"><option value="sr-RS">Srpski</option><option value="mk-MK">Makedonski</option></select>
+<label for="language">Jezik</label><select id="language"><option value="mk-MK">Makedonski</option><option value="sr-RS">Srpski</option></select>
 <nav><button id="start" class="primary">🎙️ Počni</button><button id="pause" disabled>Pauza</button><button id="stop" disabled>Zaustavi</button></nav>
 <div id="status" role="status">Spremno. Dozvoli mikrofon kada Chrome zatraži.</div><div id="interim"></div>
-<textarea id="text" placeholder="Prepoznati govor pojaviće se ovde. Možeš ga ispraviti pre prenosa."></textarea>
+<textarea id="text" placeholder="Prepoznati govor pojaviće se ovde latinicom. Možeš ga ispraviti pre prenosa."></textarea>
 <nav><button id="send" class="primary">Prenesi tekst u Kume Agent</button><button id="copy">Kopiraj tekst</button></nav>
 <small>Besplatno Chrome prepoznavanje govora. Prepoznavanje može koristiti Google servere i zahteva internet. Ne diktiraj poverljive podatke bez odgovarajuće dozvole.</small>
 </main><script>
@@ -17,7 +17,18 @@ const token=params.get('token')||'';
 if(['sr-RS','mk-MK'].includes(params.get('lang')))$('language').value=params.get('lang');
 let engine=null,wanted=false,paused=false,starting=false,session=0;
 function state(msg){$('start').disabled=wanted;$('pause').disabled=!wanted;$('stop').disabled=!wanted;$('language').disabled=wanted;$('pause').textContent=paused?'Nastavi':'Pauza';$('status').textContent=msg;}
-function append(text){if(!text.trim())return;const t=$('text');t.value+=(t.value && !/\s$/.test(t.value)?' ':'')+text.trim();}
+// Uvek prikazuj transkripciju latinicom, bez obzira na pismo koje Chrome vrati.
+const CYR_TO_LAT = {
+ 'а':'a','б':'b','в':'v','г':'g','д':'d','ѓ':'gj','ђ':'đ','е':'e','ж':'ž','з':'z','ѕ':'dz','и':'i','ј':'j','к':'k','ќ':'kj','л':'l','љ':'lj','м':'m','н':'n','њ':'nj','о':'o','п':'p','р':'r','с':'s','т':'t','ћ':'ć','у':'u','ф':'f','х':'h','ц':'c','ч':'č','џ':'dž','ш':'š','ы':'y','э':'e','ю':'ju','я':'ja'
+};
+function latinica(text){
+ return String(text).replace(/[А-Яа-яЃѓЅѕЈјЉљЊњЌќЏџЂђЋћ]/g, ch => {
+   const low=ch.toLowerCase(), latin=CYR_TO_LAT[low];
+   if(!latin)return ch;
+   return ch===ch.toUpperCase()?latin.charAt(0).toUpperCase()+latin.slice(1):latin;
+ });
+}
+function append(text){if(!text.trim())return;const t=$('text');t.value+=(t.value && !/\s$/.test(t.value)?' ':'')+latinica(text.trim());}
 function norm(s){return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[.,!?;:]+/g,'').trim();}
 function startEngine(id){if(!wanted||starting||!engine||id!==session)return;try{starting=true;engine.start();}catch(e){starting=false;}}
 $('start').onclick=()=>{
@@ -32,7 +43,7 @@ $('start').onclick=()=>{
    if(['pauza','пауза','pause'].includes(command)){paused=true;state('Pauza. Reci „počni“ ili klikni Nastavi.');continue;}
    if(['pocni','почни','nastavi','настави','resume'].includes(command)){if(paused){paused=false;if($('text').value&&!$('text').value.endsWith('\n'))$('text').value+='\n';state('Slušam…');}continue;}
    if(!paused)append(spoken);
- }$('interim').textContent=paused?'':interim.trim();};
+ }$('interim').textContent=paused?'':latinica(interim.trim());};
  engine.onerror=e=>{if(id!==session)return;starting=false;
    if(['not-allowed','service-not-allowed','language-not-supported','audio-capture'].includes(e.error)){
      wanted=false;state('Greška prepoznavanja: '+e.error+'. Proveri dozvole i podršku za jezik.');
