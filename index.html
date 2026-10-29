@@ -16,43 +16,65 @@ const targetOrigin=params.get('targetOrigin')||'';
 const token=params.get('token')||'';
 if(['sr-RS','mk-MK'].includes(params.get('lang')))$('language').value=params.get('lang');
 let engine=null,wanted=false,paused=false,starting=false,session=0;
+let finalByIndex=new Map(), committed='', mobile=/Android/i.test(navigator.userAgent);
 function state(msg){$('start').disabled=wanted;$('pause').disabled=!wanted;$('stop').disabled=!wanted;$('language').disabled=wanted;$('pause').textContent=paused?'Nastavi':'Pauza';$('status').textContent=msg;}
-// Uvek prikazuj transkripciju latinicom, bez obzira na pismo koje Chrome vrati.
 const CYR_TO_LAT = {
  'а':'a','б':'b','в':'v','г':'g','д':'d','ѓ':'gj','ђ':'đ','е':'e','ж':'ž','з':'z','ѕ':'dz','и':'i','ј':'j','к':'k','ќ':'kj','л':'l','љ':'lj','м':'m','н':'n','њ':'nj','о':'o','п':'p','р':'r','с':'s','т':'t','ћ':'ć','у':'u','ф':'f','х':'h','ц':'c','ч':'č','џ':'dž','ш':'š','ы':'y','э':'e','ю':'ju','я':'ja'
 };
-function latinica(text){
- return String(text).replace(/[А-Яа-яЃѓЅѕЈјЉљЊњЌќЏџЂђЋћ]/g, ch => {
-   const low=ch.toLowerCase(), latin=CYR_TO_LAT[low];
-   if(!latin)return ch;
-   return ch===ch.toUpperCase()?latin.charAt(0).toUpperCase()+latin.slice(1):latin;
- });
+function latinica(text){return String(text).replace(/[А-Яа-яЃѓЅѕЈјЉљЊњЌќЏџЂђЋћ]/g,ch=>{const low=ch.toLowerCase(),v=CYR_TO_LAT[low];return v?(ch===ch.toUpperCase()?v[0].toUpperCase()+v.slice(1):v):ch;});}
+function norm(s){return latinica(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[.,!?;:]+/g,'').trim();}
+function joinOverlap(existing,addition){
+  const a=existing.trim(),b=addition.trim();if(!b)return a;if(!a)return b;
+  if(norm(a)===norm(b)||norm(a).endsWith(norm(b)))return a;
+  const aa=a.split(/\s+/),bb=b.split(/\s+/);
+  for(let k=Math.min(aa.length,bb.length);k>=1;k--){
+    if(norm(aa.slice(-k).join(' '))===norm(bb.slice(0,k).join(' ')))return a+(k<bb.length?' '+bb.slice(k).join(' '):'');
+  }
+  return a+' '+b;
 }
-function append(text){if(!text.trim())return;const t=$('text');t.value+=(t.value && !/\s$/.test(t.value)?' ':'')+latinica(text.trim());}
-function norm(s){return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[.,!?;:]+/g,'').trim();}
-function startEngine(id){if(!wanted||starting||!engine||id!==session)return;try{starting=true;engine.start();}catch(e){starting=false;}}
+function updateDisplay(interim=''){
+  $('text').value=committed;
+  $('interim').textContent=paused?'':latinica(interim.trim());
+}
+function startEngine(id){if(!wanted||starting||!engine||id!==session)return;try{starting=true;engine.start();}catch(e){starting=false;state('Nije moguće pokrenuti mikrofon. Pritisni Zaustavi, pa Počni.');}}
 $('start').onclick=()=>{
  const API=window.SpeechRecognition||window.webkitSpeechRecognition;
  if(!API)return state('Chrome ne podržava SpeechRecognition u ovom prozoru.');
- const id=++session;engine=new API();engine.lang=$('language').value;engine.continuous=true;engine.interimResults=true;
+ const id=++session;committed=$('text').value.trim();finalByIndex=new Map();engine=new API();engine.lang=$('language').value;engine.continuous=true;engine.interimResults=true;
  wanted=true;paused=false;
  engine.onstart=()=>{if(id!==session)return;starting=false;state('Slušam…');};
- engine.onresult=e=>{if(id!==session)return;let interim='';for(let i=e.resultIndex;i<e.results.length;i++){
-   const r=e.results[i],spoken=r[0].transcript.trim();if(!r.isFinal){interim+=spoken+' ';continue;}
-   const command=norm(spoken);
-   if(['pauza','пауза','pause'].includes(command)){paused=true;state('Pauza. Reci „počni“ ili klikni Nastavi.');continue;}
-   if(['pocni','почни','nastavi','настави','resume'].includes(command)){if(paused){paused=false;if($('text').value&&!$('text').value.endsWith('\n'))$('text').value+='\n';state('Slušam…');}continue;}
-   if(!paused)append(spoken);
- }$('interim').textContent=paused?'':latinica(interim.trim());};
- engine.onerror=e=>{if(id!==session)return;starting=false;
-   if(['not-allowed','service-not-allowed','language-not-supported','audio-capture'].includes(e.error)){
-     wanted=false;state('Greška prepoznavanja: '+e.error+'. Proveri dozvole i podršku za jezik.');
-   }else if(e.error==='network'){wanted=false;state('Mrežna greška pri prepoznavanju govora.');}
+ engine.onresult=e=>{
+   if(id!==session)return;
+   let interim='';
+   for(let i=0;i<e.results.length;i++){
+     const r=e.results[i],spoken=latinica((r[0]?.transcript||'').trim());
+     if(r.isFinal){
+       if(!finalByIndex.has(i)){
+         finalByIndex.set(i,spoken);
+         const command=norm(spoken);
+         if(command==='pauza'){paused=true;state('Pauza. Klikni Nastavi.');}
+         else if(['pocni','nastavi','resume'].includes(command)&&paused){paused=false;state('Slušam…');}
+         else if(!paused){committed=joinOverlap(committed,spoken);}
+       }
+     }else if(i>=e.resultIndex){interim+=spoken+' ';}
+   }
+   updateDisplay(interim);
  };
- engine.onend=()=>{if(id!==session)return;starting=false;if(wanted)setTimeout(()=>startEngine(id),400);else $('interim').textContent='';};
+ engine.onerror=e=>{if(id!==session)return;starting=false;
+   if(['not-allowed','service-not-allowed','language-not-supported','audio-capture','network'].includes(e.error)){
+     wanted=false;state('Greška prepoznavanja: '+e.error+'. Proveri mikrofon, internet i podršku za jezik.');
+   }else if(e.error==='no-speech'){state('Nisam čuo govor. Pokušaj ponovo ako se mikrofon zaustavi.');}
+ };
+ engine.onend=()=>{
+   if(id!==session)return;starting=false;finalByIndex.clear();$('interim').textContent='';
+   if(wanted){
+     // Android emituje zvuk pri svakom ponovnom pokretanju. Ne pravimo automatsku petlju.
+     wanted=false;paused=false;state(mobile?'Mikrofon je zaustavljen na Androidu. Pritisni Počni za nastavak.':'Mikrofon je zaustavljen. Pritisni Počni za nastavak.');
+   }
+ };
  state('Pokrećem mikrofon…');startEngine(id);
 };
-$('pause').onclick=()=>{paused=!paused;if(!paused&&$('text').value&&!$('text').value.endsWith('\n'))$('text').value+='\n';state(paused?'Pauza.':'Slušam…');};
+$('pause').onclick=()=>{paused=!paused;state(paused?'Pauza.':'Slušam…');if(paused)$('interim').textContent='';};
 function stop(){++session;wanted=false;paused=false;starting=false;if(engine){try{engine.stop();}catch(e){}engine=null;}$('interim').textContent='';state('Zaustavljeno. Tekst možeš pregledati i preneti.');}
 $('stop').onclick=stop;
 $('send').onclick=()=>{
